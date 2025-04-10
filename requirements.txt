@@ -1,0 +1,6 @@
+pymilvus
+langchain
+langchain-openai
+langchain-community
+langchain-milvus
+docx2txt
