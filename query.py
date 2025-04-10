@@ -226,25 +226,25 @@ def interactive_query_mode(collection_name, model_name="gpt-3.5-turbo"):
         print(f"{result['answer']}")
         print(f"\nThời gian xử lý: {duration:.2f} giây")
         
-        # Hiển thị thông tin về tài liệu nguồn
-        if "source_documents" in result:
-            print("\nNguồn tham khảo:")
-            for i, doc in enumerate(result["source_documents"]):
-                print(f"  {i+1}. {doc.page_content[:100]}..." if len(doc.page_content) > 100 else f"  {i+1}. {doc.page_content}")
-                if hasattr(doc, 'metadata') and doc.metadata:
-                    source = doc.metadata.get("source", "Không xác định")
-                    print(f"     Nguồn: {source}")
+        # # Hiển thị thông tin về tài liệu nguồn
+        # if "source_documents" in result:
+        #     print("\nNguồn tham khảo:")
+        #     for i, doc in enumerate(result["source_documents"]):
+        #         print(f"  {i+1}. {doc.page_content[:100]}..." if len(doc.page_content) > 100 else f"  {i+1}. {doc.page_content}")
+        #         if hasattr(doc, 'metadata') and doc.metadata:
+        #             source = doc.metadata.get("source", "Không xác định")
+        #             print(f"     Nguồn: {source}")
         
-        print(f"{'='*50}")
+        # print(f"{'='*50}")
 
 def main():
     """Hàm chính."""
     # Tạo parser cho command line arguments
     parser = argparse.ArgumentParser(description="RAG Query với Milvus")
     parser.add_argument("--collection", "-c", type=str, default="test_collection",
-                       help="Tên collection trong Milvus")
+                       help="Tên collection trong Milvus (mặc định là test_collection)")
     parser.add_argument("--model", "-m", type=str, default="gpt-4o-mini",
-                       help="Tên model OpenAI")
+                       help="Tên model OpenAI (mặc định là gpt-4o-mini)")
     
     # Parse arguments
     args = parser.parse_args()
