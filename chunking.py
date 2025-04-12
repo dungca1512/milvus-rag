@@ -6,8 +6,6 @@ import re
 from typing import List, Dict, Any, Optional
 import docx2txt
 from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
 
 # Cấu hình logging
 def setup_logging(log_level=logging.INFO, log_file=None):
@@ -48,109 +46,105 @@ log_file = f"logs/chunking_{timestamp}.log"
 # Thiết lập logging
 logger = setup_logging(log_level=logging.INFO, log_file=log_file)
 
-class SkillBasedSplitter:
+class SectionSplitter:
     """
-    Phân chia tài liệu dựa trên các kỹ năng/năng lực quản lý.
-    Mỗi chunk sẽ chứa thông tin về một kỹ năng/năng lực cụ thể.
+    Phân chia tài liệu theo các đầu mục lớn (A, B, C) và các chuyên môn trong C.
     """
     
     def __init__(self):
-        # Các mẫu để nhận diện các kỹ năng cấp cao
-        self.skill_patterns = [
-            # Mẫu cho năng lực quản lý
-            r'^\s*\d+\.\s+(.+)$',                   # 1. Tên kỹ năng
-            r'^\s*[A-Z][\s-]+(.+)$',                # A - Tên kỹ năng 
-            r'^\s*[A-Z][A-Z\s]+:(.+)$',             # NĂNG LỰC: Tên
+        # Các mẫu để nhận diện các đầu mục lớn
+        self.main_section_patterns = [
+            r'^\s*[A-C]\s*[-–—]\s*(.+)\s*$',       # A - NĂNG LỰC CỐT LÕI
+            r'^\s*[A-C]\s*\.\s*(.+)\s*$',          # A. NĂNG LỰC CỐT LÕI
+            r'^\s*[A-C]\s+(.+)\s*$',               # A NĂNG LỰC CỐT LÕI
         ]
         
-        # Mẫu cho cấp độ kỹ năng
-        self.skill_level_pattern = r'^\s*Cấp độ\s+(\d+)(.*)$'
+        # Mẫu để nhận diện các chuyên môn trong mục C
+        self.specialty_patterns = [
+            r'^\s*C\s*[-–—]\s*NĂNG LỰC CHUYÊN MÔN:\s*(.+)\s*$',  # C - NĂNG LỰC CHUYÊN MÔN: ANDROID DEVELOPER
+            r'^\s*C\s*\.\s*NĂNG LỰC CHUYÊN MÔN:\s*(.+)\s*$',      # C. NĂNG LỰC CHUYÊN MÔN: ANDROID DEVELOPER
+            r'^\s*NĂNG LỰC CHUYÊN MÔN:\s*(.+)\s*$',              # NĂNG LỰC CHUYÊN MÔN: ANDROID DEVELOPER
+        ]
     
-    def extract_skills(self, text):
+    def identify_main_sections(self, text):
         """
-        Trích xuất các kỹ năng/năng lực từ văn bản và vị trí của chúng.
-        
-        Returns:
-            List of tuples (start_pos, end_pos, skill_name, skill_content)
+        Nhận diện các đầu mục lớn A, B, C trong văn bản.
+        Returns: List of (start_pos, end_pos, section_name, section_content)
         """
         lines = text.split('\n')
-        skills = []
-        current_line_pos = 0
-        skill_start = -1
-        current_skill = ""
+        sections = []
+        current_position = 0
+        section_start = -1
+        current_section = ""
         
         for i, line in enumerate(lines):
-            line_start_pos = current_line_pos
-            current_line_pos += len(line) + 1  # +1 for newline character
+            line_start_pos = current_position
+            current_position += len(line) + 1  # +1 cho ký tự xuống dòng
             
-            # Kiểm tra xem dòng hiện tại có phải là tên kỹ năng mới không
-            is_skill_header = False
-            skill_name = ""
+            # Kiểm tra xem dòng hiện tại có phải là đầu mục lớn không
+            is_main_section = False
+            section_name = ""
             
-            for pattern in self.skill_patterns:
+            for pattern in self.main_section_patterns:
                 match = re.match(pattern, line.strip())
                 if match:
-                    is_skill_header = True
-                    skill_name = match.group(1).strip() if match.groups() else line.strip()
+                    is_main_section = True
+                    section_name = line.strip()
                     break
             
-            # Nếu tìm thấy kỹ năng mới
-            if is_skill_header:
-                # Nếu đã có kỹ năng trước đó, lưu lại
-                if skill_start >= 0 and current_skill:
-                    skill_content = "\n".join(lines[skill_start:i])
-                    skills.append((skill_start, line_start_pos, current_skill, skill_content))
-                
-                # Bắt đầu kỹ năng mới
-                skill_start = i
-                current_skill = skill_name
-        
-        # Thêm kỹ năng cuối cùng nếu có
-        if skill_start >= 0 and current_skill:
-            skill_content = "\n".join(lines[skill_start:])
-            skills.append((skill_start, current_line_pos, current_skill, skill_content))
-        
-        return skills
-    
-    def extract_skill_levels(self, skill_content):
-        """
-        Tách nội dung kỹ năng thành các cấp độ khác nhau.
-        
-        Returns:
-            List of tuples (level, level_content)
-        """
-        lines = skill_content.split('\n')
-        levels = []
-        current_level = None
-        current_level_content = []
-        
-        for line in lines:
-            # Kiểm tra xem dòng hiện tại có phải là định nghĩa cấp độ mới không
-            level_match = re.match(self.skill_level_pattern, line.strip())
+            # Kiểm tra xem có phải đầu mục chuyên môn trong C không
+            if not is_main_section and i > 0:
+                for pattern in self.specialty_patterns:
+                    match = re.match(pattern, line.strip())
+                    if match:
+                        is_main_section = True
+                        section_name = line.strip()
+                        break
             
-            if level_match:
-                # Nếu đã có cấp độ trước đó, lưu lại
-                if current_level is not None and current_level_content:
-                    level_text = "\n".join(current_level_content)
-                    levels.append((current_level, level_text))
+            # Nếu tìm thấy đầu mục mới
+            if is_main_section:
+                # Nếu đã có đầu mục trước đó, lưu lại
+                if section_start >= 0 and current_section:
+                    section_content = "\n".join(lines[section_start:i])
+                    sections.append((section_start, line_start_pos, current_section, section_content))
                 
-                # Bắt đầu cấp độ mới
-                current_level = int(level_match.group(1))
-                current_level_content = [line]
-            elif current_level is not None:
-                # Thêm dòng vào cấp độ hiện tại
-                current_level_content.append(line)
+                # Bắt đầu đầu mục mới
+                section_start = i
+                current_section = section_name
         
-        # Thêm cấp độ cuối cùng nếu có
-        if current_level is not None and current_level_content:
-            level_text = "\n".join(current_level_content)
-            levels.append((current_level, level_text))
+        # Thêm đầu mục cuối cùng nếu có
+        if section_start >= 0 and current_section:
+            section_content = "\n".join(lines[section_start:])
+            sections.append((section_start, current_position, current_section, section_content))
         
-        return levels
+        return sections
+    
+    def extract_section_type(self, section_name):
+        """
+        Trích xuất loại đầu mục (A, B, C) và chuyên môn từ tên đầu mục.
+        """
+        # Kiểm tra xem có phải là đầu mục A, B không
+        for letter in ["A", "B"]:
+            if section_name.startswith(letter):
+                return letter, None
+        
+        # Kiểm tra xem có phải là đầu mục C với chuyên môn không
+        for pattern in self.specialty_patterns:
+            match = re.match(pattern, section_name)
+            if match:
+                specialty = match.group(1).strip()
+                return "C", specialty
+        
+        # Nếu bắt đầu bằng C nhưng không có chuyên môn
+        if section_name.startswith("C"):
+            return "C", None
+        
+        # Mặc định
+        return None, None
     
     def split_documents(self, documents):
         """
-        Phân chia documents thành các chunk theo từng kỹ năng/năng lực.
+        Phân chia documents thành các chunk theo các đầu mục A, B, C và chuyên môn.
         """
         result = []
         
@@ -158,52 +152,42 @@ class SkillBasedSplitter:
             text = doc.page_content
             base_metadata = doc.metadata
             
-            # Trích xuất các kỹ năng từ tài liệu
-            skills = self.extract_skills(text)
+            # Trích xuất các đầu mục từ tài liệu
+            sections = self.identify_main_sections(text)
             
-            if not skills:
-                # Nếu không tìm thấy kỹ năng nào, giữ nguyên document
+            if not sections:
+                # Nếu không tìm thấy đầu mục nào, giữ nguyên document
                 result.append(doc)
                 continue
             
-            # Tạo document cho từng kỹ năng
-            for _, _, skill_name, skill_content in skills:
-                # Tạo metadata cho kỹ năng
-                skill_metadata = base_metadata.copy()
-                skill_metadata["skill_name"] = skill_name
+            # Tạo document cho từng đầu mục
+            for _, _, section_name, section_content in sections:
+                # Trích xuất loại đầu mục và chuyên môn
+                section_type, specialty = self.extract_section_type(section_name)
                 
-                # Kiểm tra xem có các cấp độ kỹ năng không
-                skill_levels = self.extract_skill_levels(skill_content)
+                # Tạo metadata cho đầu mục
+                section_metadata = base_metadata.copy()
+                section_metadata["section_name"] = section_name
+                section_metadata["section_type"] = section_type
                 
-                if skill_levels:
-                    # Nếu có các cấp độ, tạo document cho từng cấp độ
-                    for level, level_content in skill_levels:
-                        level_metadata = skill_metadata.copy()
-                        level_metadata["skill_level"] = level
-                        
-                        level_doc = Document(
-                            page_content=level_content,
-                            metadata=level_metadata
-                        )
-                        result.append(level_doc)
-                else:
-                    # Nếu không có cấp độ, tạo document cho toàn bộ kỹ năng
-                    skill_doc = Document(
-                        page_content=skill_content,
-                        metadata=skill_metadata
-                    )
-                    result.append(skill_doc)
+                if specialty:
+                    section_metadata["specialty"] = specialty
+                
+                # Tạo document cho đầu mục
+                section_doc = Document(
+                    page_content=section_content,
+                    metadata=section_metadata
+                )
+                result.append(section_doc)
         
         return result
 
-def split_documents(documents, chunk_size=None, chunk_overlap=None):
+def split_documents(documents):
     """
-    Phân chia danh sách document theo từng năng lực quản lý.
+    Phân chia danh sách document theo các đầu mục A, B, C và chuyên môn.
     
     Args:
-        documents (List[Document]): Danh sách document cần phân chia
-        chunk_size: Không được sử dụng, chỉ giữ để tương thích với interface
-        chunk_overlap: Không được sử dụng, chỉ giữ để tương thích với interface
+        documents: Danh sách document cần phân chia
         
     Returns:
         List[Document]: Danh sách document đã được phân chia
@@ -212,9 +196,9 @@ def split_documents(documents, chunk_size=None, chunk_overlap=None):
     if not documents:
         return [], "none"
     
-    # Sử dụng SkillBasedSplitter để phân chia theo kỹ năng
-    splitter = SkillBasedSplitter()
-    method = "skill_based"
+    # Sử dụng SectionSplitter để phân chia theo đầu mục
+    splitter = SectionSplitter()
+    method = "section_based"
     
     logger.info(f"Tiến hành phân đoạn tài liệu theo phương pháp '{method}'")
     
@@ -236,7 +220,8 @@ def analyze_chunks(chunks):
             "avg_size": 0,
             "min_size": 0,
             "max_size": 0,
-            "skills": {}
+            "sections": {},
+            "specialties": {}
         }
     
     sizes = [len(chunk.page_content) for chunk in chunks]
@@ -244,31 +229,41 @@ def analyze_chunks(chunks):
     min_size = min(sizes)
     max_size = max(sizes)
     
-    # Đếm số lượng chunk theo kỹ năng
-    skill_counts = {}
+    # Đếm số lượng chunk theo đầu mục
+    section_counts = {"A": 0, "B": 0, "C": 0, "Khác": 0}
+    specialty_counts = {}
+    
     for chunk in chunks:
-        skill_name = chunk.metadata.get("skill_name", "Unknown")
-        if skill_name in skill_counts:
-            skill_counts[skill_name] += 1
+        section_type = chunk.metadata.get("section_type")
+        if section_type in section_counts:
+            section_counts[section_type] += 1
         else:
-            skill_counts[skill_name] = 1
+            section_counts["Khác"] += 1
+        
+        specialty = chunk.metadata.get("specialty")
+        if specialty:
+            if specialty in specialty_counts:
+                specialty_counts[specialty] += 1
+            else:
+                specialty_counts[specialty] = 1
     
     return {
         "count": len(chunks),
         "avg_size": avg_size,
         "min_size": min_size,
         "max_size": max_size,
-        "skills": skill_counts
+        "sections": section_counts,
+        "specialties": specialty_counts
     }
 
 def chunk_document(file_path, output_file=None):
     """
-    Đọc và phân chia tài liệu thành các đoạn theo từng năng lực quản lý.
+    Đọc và phân chia tài liệu thành các đoạn theo đầu mục A, B, C và chuyên môn.
     In ra từng đoạn chunk được tạo ra.
     
     Args:
-        file_path (str): Đường dẫn đến tài liệu cần xử lý
-        output_file (str, optional): Đường dẫn đến file để lưu kết quả chunk
+        file_path: Đường dẫn đến tài liệu cần xử lý
+        output_file: Đường dẫn đến file để lưu kết quả chunk
         
     Returns:
         List[Document]: Danh sách các đoạn đã phân chia
@@ -337,34 +332,37 @@ def chunk_document(file_path, output_file=None):
         
         # In ra từng đoạn
         for i, chunk in enumerate(chunks):
-            # Lấy thông tin về kỹ năng
-            skill_name = chunk.metadata.get("skill_name", "Không xác định")
-            skill_level = chunk.metadata.get("skill_level", "N/A")
+            # Lấy thông tin về đầu mục
+            section_name = chunk.metadata.get("section_name", "Không xác định")
+            section_type = chunk.metadata.get("section_type", "Không xác định")
+            specialty = chunk.metadata.get("specialty", "")
             
-            chunk_info = f"Kỹ năng: {skill_name}"
-            if skill_level != "N/A":
-                chunk_info += f", Cấp độ: {skill_level}"
+            chunk_info = f"Đầu mục: {section_name}"
+            if specialty:
+                chunk_info += f" (Chuyên môn: {specialty})"
             
             chunk_content = chunk.page_content
             chunk_size = len(chunk_content)
             
             # In ra console
             print("\n" + "="*80)
-            print(f"Chunk #{i+1}/{len(chunks)}: {chunk_info} (Kích thước: {chunk_size} ký tự)")
+            print(f"Chunk #{i+1}/{len(chunks)}: {chunk_info}")
+            print(f"Loại: {section_type}, Kích thước: {chunk_size} ký tự")
             print("-"*80)
-            print(chunk_content)
+            print(chunk_content[:1000] + "..." if len(chunk_content) > 1000 else chunk_content)
             print("="*80)
             
             # Ghi vào file nếu được chỉ định
             if output_stream:
                 output_stream.write("\n" + "="*80 + "\n")
-                output_stream.write(f"Chunk #{i+1}/{len(chunks)}: {chunk_info} (Kích thước: {chunk_size} ký tự)\n")
+                output_stream.write(f"Chunk #{i+1}/{len(chunks)}: {chunk_info}\n")
+                output_stream.write(f"Loại: {section_type}, Kích thước: {chunk_size} ký tự\n")
                 output_stream.write("-"*80 + "\n")
                 output_stream.write(chunk_content + "\n")
                 output_stream.write("="*80 + "\n")
             
             # Ghi log
-            logger.info(f"Chunk #{i+1}: {chunk_size} ký tự, Kỹ năng: {skill_name}, Cấp độ: {skill_level}")
+            logger.info(f"Chunk #{i+1}: {chunk_size} ký tự, Loại: {section_type}, Đầu mục: {section_name}")
         
         # Đóng file output nếu đã mở
         if output_stream:
@@ -380,9 +378,9 @@ def chunk_document(file_path, output_file=None):
         return None, None, None
 
 def main():
-    """Hàm chính để thực hiện chunking tài liệu theo năng lực quản lý."""
+    """Hàm chính để thực hiện chunking tài liệu theo đầu mục."""
     # Tạo parser cho command line arguments
-    parser = argparse.ArgumentParser(description="Phân chia tài liệu thành các đoạn theo năng lực quản lý")
+    parser = argparse.ArgumentParser(description="Phân chia tài liệu thành các đoạn theo đầu mục")
     parser.add_argument("--file", "-f", type=str, required=True,
                        help="Đường dẫn đến file cần phân chia")
     parser.add_argument("--output", type=str, default=None,
@@ -391,7 +389,7 @@ def main():
     # Parse arguments
     args = parser.parse_args()
     
-    logger.info("=== BẮT ĐẦU CHUNKING THEO NĂNG LỰC QUẢN LÝ ===")
+    logger.info("=== BẮT ĐẦU CHUNKING THEO ĐẦU MỤC ===")
     logger.info(f"File: {args.file}")
     
     if args.output:
@@ -406,16 +404,22 @@ def main():
     # Hiển thị kết quả
     if chunks:
         print(f"\n{'='*50}")
-        print(f"CHUNKING THEO NĂNG LỰC THÀNH CÔNG")
+        print(f"CHUNKING THEO ĐẦU MỤC THÀNH CÔNG")
         print(f"Số lượng đoạn: {chunk_stats['count']}")
         print(f"Phương pháp phân đoạn: {split_method}")
         print(f"Kích thước trung bình: {chunk_stats['avg_size']:.2f} ký tự")
         print(f"Kích thước nhỏ nhất: {chunk_stats['min_size']} ký tự")
         print(f"Kích thước lớn nhất: {chunk_stats['max_size']} ký tự")
         
-        print(f"\nCác năng lực đã phân chia:")
-        for skill_name, count in chunk_stats['skills'].items():
-            print(f"  {skill_name}: {count} chunk")
+        print(f"\nPhân bố theo đầu mục:")
+        for section_type, count in chunk_stats['sections'].items():
+            if count > 0:
+                print(f"  {section_type}: {count} chunk")
+        
+        if chunk_stats['specialties']:
+            print(f"\nPhân bố theo chuyên môn:")
+            for specialty, count in chunk_stats['specialties'].items():
+                print(f"  {specialty}: {count} chunk")
         
         print(f"{'='*50}")
     else:
