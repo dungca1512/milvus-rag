@@ -4,3 +4,4 @@ langchain-openai
 langchain-community
 langchain-milvus
 docx2txt
+langchain_experimental
